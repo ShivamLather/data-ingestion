@@ -129,26 +129,26 @@ class DataSource(Base):
     def __repr__(self):
         return f"<DataSource(data_source_id={self.data_source_id}, data_source_name={self.data_source_name})>"
     
-# class Vendor(Base):
-#     __tablename__ = 'historical_requested_vendors'
+class Vendor(Base):
+    __tablename__ = 'historical_requested_vendors'
 
-#     # Composite Primary Key: vendor_id + request_id
-#     vendor_id = Column(UUID(as_uuid=True), default=uuid.uuid4, nullable=False)
-#     request_id = Column(UUID(as_uuid=True), ForeignKey('historical_requests.request_id'), nullable=False)
+    # Composite Primary Key: vendor_id + request_id
+    vendor_id = Column(UUID(as_uuid=True), default=uuid.uuid4, nullable=False)
+    request_id = Column(UUID(as_uuid=True), ForeignKey('historical_requests.request_id'), nullable=False)
  
-#     # Vendor details
-#     company_name = Column(String(255), nullable=False)
-#     # is_approved = Column( String(20), nullable=False, default='pending')
-#     vendor_email = Column(String(255), nullable=False)
-#     vendor_name = Column(String(255), nullable=False)
-#     vendor_contact_details = Column(ARRAY(String), nullable=True)  
-#     vendor_address = Column(Text, nullable=True)
-#     vendor_type = Column(String(255), nullable=False)
-#     __table_args__ = (
-#         PrimaryKeyConstraint('vendor_id', 'request_id', name='vendors_pkey'),
-#     )
-#     def __repr__(self):
-#         return f"<Vendor(vendor_id={self.vendor_id}, request_id={self.request_id}, company_name={self.company_name}, vendor_type={self.vendor_type})>"
+    # Vendor details
+    company_name = Column(String(255), nullable=False)
+    # is_approved = Column( String(20), nullable=False, default='pending')
+    vendor_email = Column(String(255), nullable=False)
+    vendor_name = Column(String(255), nullable=False)
+    vendor_contact_details = Column(ARRAY(String), nullable=True)  
+    vendor_address = Column(Text, nullable=True)
+    vendor_type = Column(String(255), nullable=False)
+    __table_args__ = (
+        PrimaryKeyConstraint('vendor_id', 'request_id', name='vendors_hpkey'),
+    )
+    def __repr__(self):
+        return f"<Vendor(vendor_id={self.vendor_id}, request_id={self.request_id}, company_name={self.company_name}, vendor_type={self.vendor_type})>"
     
 class TruthDataProvider(Base):
     __tablename__ = "truth_data_providers"

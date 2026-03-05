@@ -1,6 +1,6 @@
 import pandas as pd
 from sqlalchemy.orm import Session
-from models import User,Request,Vendor_list,DataProvider,TruthDataProvider,DataSource,TPA
+from models import User,Request,Vendor_list,DataProvider,TruthDataProvider,DataSource,TPA,Vendor
 import uuid
 from utils import EXTRA_DATA_PROVIDERS,PROVIDER_KEYWORDS,STATUS_MAPPING
 import pandas as pd
@@ -680,3 +680,59 @@ def ingest_formdata(session, df, request_map):
         processed_requests.add(request_id)
 
     session.commit()
+    
+def ingest_requested_vendors(session: Session, df: pd.DataFrame, request_map: dict):
+
+    vendors_to_insert = []
+    seen_pairs = set()
+
+    # Load existing vendors to avoid duplicates
+    existing = {
+        (v.vendor_id, v.request_id)
+        for v in session.query(Vendor.vendor_id, Vendor.request_id).all()
+    }
+
+    for _, row in df.iterrows():
+
+        chat_name = str(row.get("Request Number")).strip()
+        request_id = request_map.get(chat_name)
+
+        if not request_id:
+            continue
+
+        vendor_name = row.get("3rd Party Vendor")
+        vendor_email = row.get("Vendor Email")
+        vendor_contact = row.get("Vendor Contact")
+        vendor_type = row.get("Vendor Type")
+
+        if not isinstance(vendor_name, str):
+            continue
+
+        vendor_name = vendor_name.strip()
+
+        # Generate deterministic vendor_id per row
+        vendor_id = uuid.uuid4()
+
+        key = (vendor_id, request_id)
+
+        if key in existing or key in seen_pairs:
+            continue
+
+        vendor = Vendor(
+            vendor_id=vendor_id,
+            request_id=request_id,
+            company_name=vendor_name,
+            vendor_email=vendor_email if isinstance(vendor_email, str) else "",
+            vendor_name=vendor_name,
+            vendor_contact_details=[vendor_contact] if pd.notna(vendor_contact) else None,
+            vendor_type=vendor_type if isinstance(vendor_type, str) else "Primary"
+        )
+
+        vendors_to_insert.append(vendor)
+        seen_pairs.add(key)
+
+    if vendors_to_insert:
+        session.bulk_save_objects(vendors_to_insert)
+        session.commit()
+
+    print(f"Inserted {len(vendors_to_insert)} requested vendors")
