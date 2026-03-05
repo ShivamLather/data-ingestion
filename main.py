@@ -1,5 +1,5 @@
 from helper import ingest_requestors,ingest_requests,ingest_vendors,copy_data_providers,seed_extra_data_providers,ingest_datasources,ingest_tpas
-from models import get_engine
+from models import get_engine,Base
 from sqlalchemy.orm import sessionmaker
 from models import TPA
 from clear_dat import delete_all_data
@@ -8,7 +8,7 @@ def main():
     session = None
     try:
         engine = get_engine()
-
+        # Base.metadata.create_all(engine)
         SessionLocal = sessionmaker(bind=engine)
         session = SessionLocal()
         

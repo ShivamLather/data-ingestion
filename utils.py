@@ -50,13 +50,13 @@ PROVIDER_KEYWORDS = {
 STATUS_MAPPING = {
     "cancelled by data provider": "CANCELLED",
     "cancelled by requestor": "CANCELLED",
-    "cancelled by ssl dg": "CANCELLED",
+    "cancelled by ssl dg": "REJECTED",
     "expired": "EXPIRED",
     "in effect": "IN_EFFECT",
     "request initiated": "AWAITING_REVIEWER_ACTION",
     "re-submitted": "AWAITING_REVIEWER_ACTION",
     "awaiting vendor submission": "AWAITING_REVIEWER_ACTION",
     "reject": "REJECTED",
-    "return to requestor": "REJECTED",
+    "return to requestor": "REVISION_REQUIRED",
     "approved": "TPA_INITIATED",
 }

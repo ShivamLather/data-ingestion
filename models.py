@@ -1,6 +1,6 @@
-from sqlalchemy import Column, String, Boolean,Text,TIMESTAMP,ForeignKey,Integer,Date,DateTime,ForeignKeyConstraint
+from sqlalchemy import Column, String, Boolean,Text,TIMESTAMP,ForeignKey,Integer,Date,DateTime,ForeignKeyConstraint,PrimaryKeyConstraint
 from sqlalchemy.ext.mutable import MutableList
-from sqlalchemy.dialects.postgresql import UUID,JSONB
+from sqlalchemy.dialects.postgresql import UUID,JSONB,ARRAY
 from sqlalchemy.sql import func
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase
@@ -28,7 +28,7 @@ def get_engine():
     return create_engine(get_database_url())
 
 class User(Base):
-    __tablename__ = 'testing_users'
+    __tablename__ = 'historical_users'
  
     # Primary Key
     user_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, unique=True, nullable=False)
@@ -48,21 +48,20 @@ class User(Base):
         return f"<User(name={self.name}, email={self.email}, role={self.application_role})>"
     
 class Request(Base):
-    __tablename__ = 'testing_requests'
+    __tablename__ = 'historical_requests'
     created_date = Column(TIMESTAMP, server_default=func.now())
  
     # Primary Key
     request_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, unique=True, nullable=False)
  
     # Foreign Key to users.user_id
-    requestor_id = Column(UUID(as_uuid=True), ForeignKey('testing_users.user_id'), nullable=False)
+    requestor_id = Column(UUID(as_uuid=True), ForeignKey('historical_users.user_id'), nullable=False)
  
     # JSON-based data storage
     status = Column(Text, nullable=False)
     submission_date = Column(TIMESTAMP)
     chat_name = Column(String(255), nullable=False)
     is_cloned = Column(Boolean, nullable=False, default=False, server_default="false")
-    # chat_data = Column(JSONB, nullable=True)
     form_data = Column(MutableList.as_mutable(JSONB), nullable=True)
     curr_ques_id = Column(Integer, nullable=True)
     latest_ques_id = Column(Integer, nullable=True)
@@ -70,22 +69,21 @@ class Request(Base):
     current_stakeholder_email = Column(String(255), nullable=True)
     request_metadata = Column(JSONB, nullable=True)
     suggested_datasource = Column(JSONB, nullable=True)
- 
+    requires_pdc_approval = Column(Boolean, nullable=True,default=False)
     # Foreign Key to self (for sub-requests)
-    parent_request_id = Column(UUID(as_uuid=True), ForeignKey('testing_requests.request_id'), nullable=True)
- 
+    parent_request_id = Column(UUID(as_uuid=True), ForeignKey('historical_requests.request_id'), nullable=True)
+    
+    #To track which flow user is in which will help in skipping questions which are not relevant to user flow bucket
+    flows = Column(ARRAY(String), nullable=True)
     # Counters for various data sources
-    veeva_counter = Column(Integer,nullable=True)
-    iqvia_counter = Column(Integer,nullable=True)
     validation = Column(JSONB, nullable=True)
     project_name = Column(String(255), nullable=True)
-    requires_pdc_approval = Column(Boolean, default=False, nullable=False)
  
     def __repr__(self):
         return f"<Request(requestor_id={self.requestor_id}, status={self.status}, chat_name={self.chat_name})>"
 
 class Vendor_list(Base):
-    __tablename__ = 'truth_table_testing2'
+    __tablename__ = 'historical_truth_vendors'
 
     id = Column(UUID(as_uuid=True),
                 primary_key=True,
@@ -94,34 +92,63 @@ class Vendor_list(Base):
                 nullable=False)
 
     name = Column(String(255),
-                  nullable=False,
-                  unique=True)
+                  nullable=False
+                  )
 
-    is_open_data_approved = Column(Boolean,
+    is_approved = Column(Boolean,
                          nullable=False,
                          default=False)
 
-    is_compass_approved = Column(Boolean,
+    is_restricted = Column(Boolean,
                            nullable=False,
                            default=False)
+    
+    is_in_open_data_directory = Column(Boolean, 
+                                       nullable=False, 
+                                       default=False)
+    
+    is_in_compass_directory = Column(Boolean, 
+                                     nullable=False, 
+                                     default=False)
 
     def __repr__(self):
         return f"<Vendor_list(id={self.id}, name='{self.name}')>"
     
 class DataSource(Base):
-    __tablename__ = 'testing_truth_datasources'
+    __tablename__ = 'historical_truth_datasources'
 
     # Primary Key
     data_source_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, unique=True, nullable=False)
  
     # Foreign Key to data_provider.data_provider_id
-    data_provider_id = Column(UUID(as_uuid=True), ForeignKey('testing_truth_data_providers.data_provider_id'), nullable=False)
+    data_provider_id = Column(UUID(as_uuid=True), ForeignKey('historical_truth_data_providers.data_provider_id'), nullable=False)
 
     # Data source details
     data_source_name = Column(String(255), nullable=False)
     processing_time_est = Column(TIMESTAMP, nullable=True)
     def __repr__(self):
         return f"<DataSource(data_source_id={self.data_source_id}, data_source_name={self.data_source_name})>"
+    
+# class Vendor(Base):
+#     __tablename__ = 'historical_requested_vendors'
+
+#     # Composite Primary Key: vendor_id + request_id
+#     vendor_id = Column(UUID(as_uuid=True), default=uuid.uuid4, nullable=False)
+#     request_id = Column(UUID(as_uuid=True), ForeignKey('historical_requests.request_id'), nullable=False)
+ 
+#     # Vendor details
+#     company_name = Column(String(255), nullable=False)
+#     # is_approved = Column( String(20), nullable=False, default='pending')
+#     vendor_email = Column(String(255), nullable=False)
+#     vendor_name = Column(String(255), nullable=False)
+#     vendor_contact_details = Column(ARRAY(String), nullable=True)  
+#     vendor_address = Column(Text, nullable=True)
+#     vendor_type = Column(String(255), nullable=False)
+#     __table_args__ = (
+#         PrimaryKeyConstraint('vendor_id', 'request_id', name='vendors_pkey'),
+#     )
+#     def __repr__(self):
+#         return f"<Vendor(vendor_id={self.vendor_id}, request_id={self.request_id}, company_name={self.company_name}, vendor_type={self.vendor_type})>"
     
 class TruthDataProvider(Base):
     __tablename__ = "truth_data_providers"
@@ -140,7 +167,7 @@ class TruthDataProvider(Base):
         return f"<DataProvider(name={self.name}, stake_holder_email={self.stake_holder_email})>"
    
 class DataProvider(Base):
-    __tablename__ = 'testing_truth_data_providers'
+    __tablename__ = 'historical_truth_data_providers'
 
     # Primary Key
     data_provider_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, unique=True, nullable=False)
@@ -156,7 +183,7 @@ class DataProvider(Base):
         return f"<DataProvider(name={self.name}, stake_holder_email={self.stake_holder_email})>"
                 
 class TPA(Base):
-    __tablename__ = 'testing_requested_tpa'
+    __tablename__ = 'historical_requested_tpa'
 
     # Primary Key
     TPA_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, unique=True, nullable=False)
@@ -166,7 +193,7 @@ class TPA(Base):
     # Foreign Key
     request_id = Column(UUID(as_uuid=True), nullable=False)
     vendor_id = Column(UUID(as_uuid=True), nullable=True)
-    data_source_id = Column(UUID(as_uuid=True), ForeignKey('testing_truth_datasources.data_source_id'), nullable=False)
+    data_source_id = Column(UUID(as_uuid=True), ForeignKey('historical_truth_datasources.data_source_id'), nullable=False)
  
     # TPA details
     additional_info_prev_status = Column(Text, nullable=True)

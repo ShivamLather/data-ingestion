@@ -4,10 +4,14 @@ from models import User,Request,Vendor_list,DataProvider,TruthDataProvider,DataS
 import uuid
 from utils import EXTRA_DATA_PROVIDERS,PROVIDER_KEYWORDS,STATUS_MAPPING
 import pandas as pd
-excel_path = "C:/Users/ShivamLather/OneDrive - ProcDNA Analytics Pvt. Ltd/Desktop/DataInjestionScript/DSF Requests - History.csv.xlsx"
-sheet_name = "DSF Requests - History"
+import random
+import json
+
+excel_path = "C:/Users/ShivamLather/OneDrive - ProcDNA Analytics Pvt. Ltd/Desktop/DataInjestionScript/c.xlsx"
+sheet_name = "Sheet1"
 
 df = pd.read_excel(excel_path, sheet_name=sheet_name)
+
 
 def extract_from_excel(df: pd.DataFrame, column: str) -> pd.Series:
     """
@@ -25,8 +29,8 @@ def extract_from_excel(df: pd.DataFrame, column: str) -> pd.Series:
 def extract_requests(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
-    df["Requestor"] = (
-        df["Requestor"]
+    df["used_name"] = (
+        df["used_name"]
         .astype(str)
         .str.strip()
         .str.lower()
@@ -61,16 +65,10 @@ def get_existing_datasources(session: Session) -> set:
         for ds in session.query(DataSource).all()
     }
 
-def get_existing_user_names(session: Session):
-    """
-    Fetches Users from database
-    
-    :param session: Description
-    :type session: Session
-    """
+def get_existing_user_ids(session: Session):
     return {
-        name.strip().lower()
-        for (name,) in session.query(User.name).all()
+        str(user_id)
+        for (user_id,) in session.query(User.user_id).all()
     }
 
 def get_existing_vendor_names(session: Session) -> set:
@@ -87,30 +85,38 @@ def get_existing_chat_names(session: Session) -> set:
         if chat_name
     }
    
-def build_new_users(unique_requestors, existing_names):
-    new_users = []
+def build_new_users(df: pd.DataFrame, existing_user_ids: set):
 
-    for name in unique_requestors:
-        if name not in existing_names:
-            user = User(
-                name=name,
-                email=f"{name.replace(' ', '.')}.{uuid.uuid4().hex[:6]}@placeholder.com",
-                application_role="requestor",
-                department=None,
-                contact_number=None,
-                is_first_login=True
-            )
-            new_users.append(user)
+    users = []
+    seen_user_ids = set()
+    for _, row in df.iterrows():
+        if pd.isna(row["user_id"]):
+            continue
 
-    return new_users
+        if row["user_id"] in existing_user_ids:
+            continue
+        if row["user_id"] in seen_user_ids:
+            continue
+        user = User(
+            user_id=row["user_id"],
+            name=row["used_name"],
+            email=row["email"],
+            application_role="requestor",
+        )
 
-def build_requests(df: pd.DataFrame, user_map: dict, existing_chat_names: set):
+        users.append(user)
+        existing_user_ids.add(row["user_id"])
+        seen_user_ids.add(row["user_id"])
+
+    return users
+
+def build_requests(df: pd.DataFrame, existing_chat_names: set):
     requests = []
     seen_chat_names = set()
 
     for _, row in df.iterrows():
         chat_name = str(row["Request Number"]).strip()
-        requestor_name = str(row["Requestor"]).strip().lower()
+        requestor_id = row.get("user_id")
 
         # Skip if already exists in DB
         if chat_name in existing_chat_names:
@@ -120,7 +126,7 @@ def build_requests(df: pd.DataFrame, user_map: dict, existing_chat_names: set):
         if chat_name in seen_chat_names:
             continue
 
-        if requestor_name not in user_map:
+        if pd.isna(requestor_id):
             continue
 
         seen_chat_names.add(chat_name)
@@ -133,9 +139,9 @@ def build_requests(df: pd.DataFrame, user_map: dict, existing_chat_names: set):
 
         req = Request(
             chat_name=chat_name,
-            requestor_id=user_map[requestor_name],
-            created_date=row.get("Request Received Date"),
-            status="submitted",
+            requestor_id=requestor_id,
+            submission_date=row.get("Request Received Date"),
+            status="under_review",
             is_cloned=False,
             project_name=project_name
         )
@@ -152,8 +158,6 @@ def build_new_vendors(vendor_names, existing_names):
             vendors.append(
                 Vendor_list(
                     name=name,
-                    is_open_data_approved=False,
-                    is_compass_approved=False
                 )
             )
 
@@ -198,10 +202,12 @@ def build_datasources(
 
     return datasources
 
-def get_user_name_id_map(session: Session) -> dict:
+def get_user_map_from_df(df: pd.DataFrame):
+
     return {
-        user.name.strip().lower(): user.user_id
-        for user in session.query(User).all()
+        str(row["Request Number"]).strip(): row["user_id"]
+        for _, row in df.iterrows()
+        if pd.notna(row["user_id"])
     }
    
 def ingest_users(session: Session, users):
@@ -210,31 +216,21 @@ def ingest_users(session: Session, users):
         session.commit()
 
 def ingest_requestors(session: Session):
-    requestors = extract_from_excel(df, "Requestor")
 
-
-    unique_requestors = requestors.unique()
-
-    existing_names = get_existing_user_names(session)
-    new_users = build_new_users(unique_requestors, existing_names)
+    existing_user_ids = get_existing_user_ids(session)
+    new_users = build_new_users(df, existing_user_ids)
 
     ingest_users(session, new_users)
 
     print(f"Inserted {len(new_users)} new users")
 
 def ingest_requests(session: Session):
-    df = pd.read_excel(
-        excel_path,
-        sheet_name="DSF Requests - History"
-    )
-
+    global df
     df = extract_requests(df)
-    user_map = get_user_name_id_map(session)
     existing_chat_names = get_existing_chat_names(session)
 
     request_objects = build_requests(
         df,
-        user_map,
         existing_chat_names
     )
 
@@ -245,10 +241,6 @@ def ingest_requests(session: Session):
     print(f"Inserted {len(request_objects)} new requests")
 
 def ingest_vendors(session: Session):
-    df = pd.read_excel(
-        excel_path,
-        sheet_name="DSF Requests - History"
-    )
 
     vendor_series = extract_from_excel(df,"3rd Party Vendor")
     unique_vendors = vendor_series.unique()
@@ -315,11 +307,6 @@ def seed_extra_data_providers(session: Session):
     print(f"Inserted {len(new_rows)} extra data providers")
 
 def ingest_datasources(session: Session):
-    df = pd.read_excel(
-        excel_path,
-        sheet_name="DSF Requests - History"
-    )
-
     provider_map = get_data_provider_map(session)
     existing_datasources = get_existing_datasources(session)
 
@@ -358,9 +345,17 @@ def get_vendor_map(session: Session) -> dict:
     }
 
 def get_existing_tpas(session: Session) -> set:
+    rows = session.query(
+        TPA.request_id,
+        TPA.data_source_id,
+        TPA.vendor_id,
+        TPA.tpa_name
+    ).all()
+
     return {
-        (t.request_id, t.data_source_id,t.vendor_id, t.tpa_name.lower())
-        for t in session.query(TPA).all()
+        (r_id, ds_id, v_id, name.lower())
+        for r_id, ds_id, v_id, name in rows
+        if name
     }
 
 def clean_datetime(value):
@@ -383,6 +378,13 @@ def get_request_map(session: Session) -> dict:
         r.chat_name.strip(): r.request_id
         for r in session.query(Request).all()
     }
+
+def generate_unique_tpa_name(existing_tpas, request_id, datasource_id, vendor_id):
+    while True:
+        name = f"TPA_{random.randint(0, 9_999_999):07d}"
+        dedupe_key = (request_id, datasource_id, vendor_id, name.lower())
+        if dedupe_key not in existing_tpas:
+            return name
 
 def build_tpas(
     df: pd.DataFrame,
@@ -420,8 +422,10 @@ def build_tpas(
         
         # --- TPA name ---
         tpa_name = row.get("TPA#")
-        if not isinstance(tpa_name, str):
-            continue
+        if not isinstance(tpa_name, str) or not tpa_name.strip():
+            tpa_name = generate_unique_tpa_name(existing_tpas,request_id,datasource_id,vendor_id)
+        else:
+            tpa_name = tpa_name.strip()
 
         dedupe_key = (request_id, datasource_id,vendor_id, tpa_name.lower())
         if dedupe_key in existing_tpas:
@@ -438,6 +442,7 @@ def build_tpas(
             vendor_id=vendor_id,
             tpa_name=tpa_name.strip(),
             datasource_tpa_status=mapped_status,
+            data_access_period_start_date=row.get("Data Share Approval Date"),
             tpa_signing_date=clean_datetime(row.get("TPA Approved date")),
             tpa_ineffect=(mapped_status == "IN_EFFECT"),
             tpa_ineffect_date=clean_datetime(row.get("Agreement Effective Start Date")),
@@ -451,10 +456,6 @@ def build_tpas(
     return tpas
 
 def ingest_tpas(session: Session):
-    df = pd.read_excel(
-        excel_path,
-        sheet_name="DSF Requests - History"
-    )
 
     request_map = get_request_map(session)
     datasource_map = get_datasource_map(session)
@@ -472,5 +473,210 @@ def ingest_tpas(session: Session):
     if tpa_objects:
         session.bulk_save_objects(tpa_objects)
         session.commit()
-
+    ingest_formdata(session,df,request_map)
     print(f"Inserted {len(tpa_objects)} TPAs")
+
+def build_formdata(request, tpas, vendor_map, datasource_map):
+
+    vendors = []
+    vendor_seen = set()
+
+    datasources = []
+    ds_seen = set()
+
+    for tpa in tpas:
+
+        # --- Vendor ---
+        vendor_name = vendor_map.get(tpa.vendor_id)
+
+        if vendor_name and vendor_name not in vendor_seen:
+            vendors.append({
+                "vendor_name": vendor_name,
+                "vendor_type": "Primary"
+            })
+            vendor_seen.add(vendor_name)
+
+        # --- Datasource ---
+        datasource_name = datasource_map.get(tpa.data_source_id)
+
+        if datasource_name and datasource_name not in ds_seen:
+            datasources.append(datasource_name)
+            ds_seen.add(datasource_name)
+
+    formdata = [
+        {
+            "question": "Hello!\nI'm your Data Access Assistant\nHere, you can easily request the data you need through a simple conversation. Just tell me what you're working on and I'll guide you through the rest, step-by-step. Let's get started!",
+            "in_pdc_flow": False,
+            "question_id": 1,
+            "question_type": "text",
+            "parent_ques_ids": [],
+            "suggested_response": [],
+            "previous_edit_response": "",
+            "response": f"I'm working on a project titled '{request.project_name}'"
+        },
+        {
+            "key": "",
+            "modes": [
+                "general"
+            ],
+            "options": [
+            {
+                "option": "Boehringer employees or contractors(Working as part of Boehringer team)"
+            },
+            {
+                "option": "External third-party vendors"
+            }
+            ],
+            "question": "Before we continue, who will be using this data?",
+            "response": "External third-party vendors",
+            "question_id": 2,
+            "question_type": "single_select",
+            "question_label": "Who will be using the data",
+            "parent_ques_ids": [],
+            "suggested_response": [],
+            "previous_edit_response": ""
+        },
+        {
+            "key": "data_access_type",
+            "modes": [
+                "general",
+                "internal"
+            ],
+            "options": [
+            {
+                "option": "I want access to Patient de-identified data"
+            },
+            {
+                "option": "I want access to Octopoda / DataLand"
+            }
+            ],
+            "question": "Are you looking for a patient level dataset? Please note, in case you are looking for patient identified data, reach out to [Sanjeev Garr](mailto:sanjeev.garr@boehringer-ingelheim.com) for further assistance.",
+            "response": "I want access to de-identified data",
+            "question_id": 3,
+            "question_type": "single_select",
+            "question_label": "Data Access Disclaimer",
+            "parent_ques_ids": [],
+            "suggested_response": [],
+            "previous_edit_response": ""
+        },
+        {
+            "key": "usecase_name",
+            "question": "What is the project name for this usecase?",
+            "response": request.project_name,
+            "in_pdc_flow": False,
+            "question_id": 5,
+            "question_type": "text",
+            "question_label": "Project Name",
+            "parent_ques_ids": [],
+            "suggested_response": [
+            "CKD PDT Q4 '24"
+            ],
+            "previous_edit_response": ""
+        },
+        {
+            "key": "selected_datasource",
+            "options": [],
+            "question": "Given a few data sources, which one would you prefer to leverage here?",
+            "in_pdc_flow": False,
+            "question_id": 7,
+            "question_type": "datasource_list",
+            "question_label": "Data Source Selected",
+            "parent_ques_ids": [],
+            "suggested_response": [],
+            "previous_edit_response": "",
+            "response": datasources
+        },
+        {
+                "key": "vendors",
+            "options": [],
+            "question": "Could you list the vendors involved in this project? \nNOTE: If you plan to share this information with any secondary vendor, please provide their details below.",
+            "response": vendors,
+            "in_pdc_flow": False,
+            "question_id": 9,
+            "question_type": "vendor_list",
+            "question_label": "Vendors Involved",
+            "parent_ques_ids": [
+            7
+            ],
+            "suggested_response": [],
+            "previous_edit_response": ""
+        },
+        {
+            "key": "promotional_use",
+            "question": "Will the data be used for any promotional purpose, disease state awareness education, or non-personal communication purpose?",
+            "response": "No",
+            "in_pdc_flow": False,
+            "question_id": 17,
+            "question_type": "boolean",
+            "question_label": "Promotional Use of Data",
+            "parent_ques_ids": [],
+            "suggested_response": [
+            "No"
+            ],
+            "previous_edit_response": ""
+        },
+        {
+            "question_id": 26,
+            "response": True
+        }
+    ]
+
+    return formdata
+
+def get_vendor_name_map(session):
+    return {
+        v.id: v.name
+        for v in session.query(Vendor_list).all()
+    }
+
+
+def get_datasource_name_map(session):
+    return {
+        ds.data_source_id: ds.data_source_name
+        for ds in session.query(DataSource).all()
+    }
+    
+def ingest_formdata(session, df, request_map):
+    vendor_name_map = get_vendor_name_map(session)
+    datasource_name_map = get_datasource_name_map(session)
+    processed_requests = set()
+
+    for _, row in df.iterrows():
+
+        chat_name = str(row["Request Number"]).strip()
+
+        if chat_name not in request_map:
+            continue
+
+        request_id = request_map[chat_name]
+
+        # Prevent duplicate processing (multiple TPAs per request)
+        if request_id in processed_requests:
+            continue
+
+        request = session.query(Request).filter(
+            Request.request_id == request_id
+        ).first()
+
+        if not request:
+            continue
+
+        # Skip if formdata already exists
+        if request.form_data:
+            processed_requests.add(request_id)
+            continue
+
+        tpas = session.query(TPA).filter(
+            TPA.request_id == request_id
+        ).all()
+
+        if not tpas:
+            continue
+
+        formdata = build_formdata(request, tpas,vendor_name_map,datasource_name_map)
+
+        request.form_data = formdata
+
+        processed_requests.add(request_id)
+
+    session.commit()
